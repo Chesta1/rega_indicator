@@ -96,12 +96,12 @@ def fetch_api_data(city_id, start_date, end_date, total_rooms, trigger_points):
             timeout=30
         )
 
-        # Only show detailed debug info when expanded
-        with st.expander(f"Debug for {total_rooms} rooms request", expanded=False):
-            st.write("Request Payload:", payload)
-            st.write("Response Status Code:", response.status_code)
-            st.write("Response Headers:", dict(response.headers))
-            st.write("First 500 chars of Response:", response.text[:500] + "..." if len(response.text) > 500 else response.text)
+        # # Only show detailed debug info when expanded
+        # with st.expander(f"Debug for {total_rooms} rooms request", expanded=False):
+        #     st.write("Request Payload:", payload)
+        #     st.write("Response Status Code:", response.status_code)
+        #     st.write("Response Headers:", dict(response.headers))
+        #     st.write("First 500 chars of Response:", response.text[:500] + "..." if len(response.text) > 500 else response.text)
 
         response.raise_for_status()
         debug_container.empty()
