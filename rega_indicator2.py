@@ -413,13 +413,13 @@ def display_results(results):
                         return obj.tolist()
                     return super(NumpyJSONEncoder, self).default(obj)
                     
-            json_str = json.dumps(original_df.to_dict(orient="records"), indent=2, cls=NumpyJSONEncoder)
-            st.download_button(
-                label="Download Original JSON",
-                data=json_str,
-                file_name="original_api_data.json",
-                mime="application/json"
-            )
+            # json_str = json.dumps(original_df.to_dict(orient="records"), indent=2, cls=NumpyJSONEncoder)
+            # st.download_button(
+            #     label="Download Original JSON",
+            #     data=json_str,
+            #     file_name="original_api_data.json",
+            #     mime="application/json"
+            # )
             
         with col2:
             flattened_csv = flattened_df.to_csv(index=False)
@@ -430,21 +430,21 @@ def display_results(results):
                 mime="text/csv"
             )
             
-            # Convert flattened dataframe to JSON for download
-            flattened_json_str = json.dumps(flattened_df.to_dict(orient="records"), indent=2, cls=NumpyJSONEncoder)
-            st.download_button(
-                label="Download Flattened JSON",
-                data=flattened_json_str,
-                file_name="flattened_api_data.json",
-                mime="application/json"
-            )
+            # # Convert flattened dataframe to JSON for download
+            # flattened_json_str = json.dumps(flattened_df.to_dict(orient="records"), indent=2, cls=NumpyJSONEncoder)
+            # st.download_button(
+            #     label="Download Flattened JSON",
+            #     data=flattened_json_str,
+            #     file_name="flattened_api_data.json",
+            #     mime="application/json"
+            # )
         
-        # Display basic stats by room type if possible
-        if 'room_type_desc' in original_df.columns and 'averagePrice' in original_df.columns:
-            st.subheader("Summary by Room Type")
-            summary = original_df.groupby('room_type_desc')['averagePrice'].agg(['mean', 'min', 'max', 'count']).reset_index()
-            summary.columns = ['Room Type', 'Average Price', 'Min Price', 'Max Price', 'Count']
-            st.dataframe(summary)
+        # # Display basic stats by room type if possible
+        # if 'room_type_desc' in original_df.columns and 'averagePrice' in original_df.columns:
+        #     st.subheader("Summary by Room Type")
+        #     summary = original_df.groupby('room_type_desc')['averagePrice'].agg(['mean', 'min', 'max', 'count']).reset_index()
+        #     summary.columns = ['Room Type', 'Average Price', 'Min Price', 'Max Price', 'Count']
+        #     st.dataframe(summary)
             
     except Exception as e:
         st.error(f"Error processing results: {str(e)}")
@@ -454,8 +454,8 @@ def display_results(results):
         st.json(results)  # Display raw JSON as fallback
 
 def main():
-    st.set_page_config(page_title="Multiple Room Types Data Extractor", layout="wide")
-    st.title("📊 Multiple Room Types Data Extractor")
+    st.set_page_config(page_title="Rental Real Estate Indicator Data", layout="wide")
+    st.title("📊 Rental Real Estate Indicator Data")
     
     # Load city-district mapping data
     mapping_data = load_city_district_data()
