@@ -164,7 +164,7 @@ def fetch_all_room_types(city_id, start_date, end_date, room_types, trigger_poin
     return all_results
 
 
-def display_results(results):
+def display_results(results, selected_district=None, date_period=None):
     """Display and offer download options for the results"""
     import pandas as pd
     import numpy as np
@@ -196,15 +196,45 @@ def display_results(results):
         # Convert to DataFrame with error handling
         df = pd.json_normalize(normalized_results)
         
+        # Add the district name and date period if provided
+        if selected_district:
+            df['district_name'] = selected_district
+        
+        if date_period:
+            df['date_period'] = date_period
+        
         # Add room type description for clarity if room_type exists
         if 'room_type' in df.columns:
-            room_type_map = {
+            # First define the apartment room type mapping
+            apartment_room_type_map = {
                 0: "All Rooms",
                 2: "2 Bedrooms", 
                 3: "3 Bedrooms",
                 4: "4 Bedrooms"
             }
-            df['room_type_desc'] = df['room_type'].map(lambda x: room_type_map.get(x, f"{x} Bedrooms"))
+            
+            # Define specific descriptions for non-apartment property types
+            unit_name_descriptions = {
+                "duplex": "Duplex Unit",
+                "floor": "Full Floor",
+                "office_space": "Office Space",
+                "shop": "Retail Shop",
+                "studio": "Studio Unit",
+                "trade_exhibiti": "Trade Exhibition Space",
+                # Add any other property types here
+            }
+            
+            # Create a custom room_type_desc based on both room_type and unitName
+            def get_room_type_desc(row):
+                # For apartments, use the bedroom-based mapping
+                if str(row['unitName']).lower() in ['apartment', 'appartment']:
+                    return apartment_room_type_map.get(row['room_type'], f"{row['room_type']} Bedrooms")
+                else:
+                    # For non-apartments, use the unit name mapping
+                    return unit_name_descriptions.get(row['unitName'], f"Other: {row['unitName']}")
+            
+            # Apply the custom mapping
+            df['room_type_desc'] = df.apply(get_room_type_desc, axis=1) ## here we will be applying the function horozontally row-wise
             
             # First, show the original dataset size
             original_size = len(df)
@@ -268,12 +298,32 @@ def display_results(results):
                 st.info(f"Removed {duplicate_count} duplicate records ({duplicate_count / original_size * 100:.1f}% of data)")
                 st.text(f"Final dataset: {final_size} rows")
             
-            # Move room type columns to the front for better visibility
+            # Move room_type_desc to the front and exclude room_type from display
             if not df.empty:
                 cols = df.columns.tolist()
-                room_cols_present = [col for col in room_cols if col in cols]
-                other_cols = [col for col in cols if col not in room_cols]
-                df = df[room_cols_present + other_cols]
+                
+                # Determine which columns to place at the front
+                front_cols = []
+                if 'district_name' in cols:
+                    front_cols.append('district_name')
+                    cols.remove('district_name')
+                
+                if 'date_period' in cols:
+                    front_cols.append('date_period')
+                    cols.remove('date_period')
+                
+                if 'room_type_desc' in cols:
+                    front_cols.append('room_type_desc')
+                    cols.remove('room_type_desc')
+                
+                # Combine the front columns with the rest
+                cols = front_cols + cols
+                
+                # Remove room_type from the columns to display
+                if 'room_type' in cols:
+                    cols.remove('room_type')
+                
+                df = df[cols]
         
         # This is our original dataframe (after deduplication)
         original_df = df.copy()
@@ -333,12 +383,21 @@ def display_results(results):
         flattened_df = pd.DataFrame()
         
         # Add the core identifying columns first
-        if 'room_type' in original_df:
-            flattened_df['room_type'] = original_df['room_type']
+        if 'district_name' in original_df:
+            flattened_df['district_name'] = original_df['district_name']
+            
+        if 'date_period' in original_df:
+            flattened_df['date_period'] = original_df['date_period']
+            
         if 'room_type_desc' in original_df:
             flattened_df['room_type_desc'] = original_df['room_type_desc']
+            
         if 'unitName' in original_df:
             flattened_df['unitName'] = original_df['unitName']
+            
+        # Keep room_type for internal processing but don't include in final display
+        if 'room_type' in original_df:
+            room_type_temp = original_df['room_type']  # Store for processing if needed
             
         # Add important numeric columns
         for col in ['sumRent', 'sumDeals', 'avg', 'avgMax', 'avgMin']:
@@ -438,12 +497,12 @@ def display_results(results):
             #     file_name="flattened_api_data.json",
             #     mime="application/json"
             # )
-        
-        # # Display basic stats by room type if possible
-        # if 'room_type_desc' in original_df.columns and 'averagePrice' in original_df.columns:
-        #     st.subheader("Summary by Room Type")
-        #     summary = original_df.groupby('room_type_desc')['averagePrice'].agg(['mean', 'min', 'max', 'count']).reset_index()
-        #     summary.columns = ['Room Type', 'Average Price', 'Min Price', 'Max Price', 'Count']
+            
+        # # Add summary by property type
+        # st.subheader("Summary by Property Type")
+        # if 'room_type_desc' in original_df.columns and 'avg' in original_df.columns:
+        #     summary = original_df.groupby('room_type_desc')['avg'].agg(['mean', 'min', 'max', 'count']).reset_index()
+        #     summary.columns = ['Property Type', 'Average Price', 'Min Price', 'Max Price', 'Count']
         #     st.dataframe(summary)
             
     except Exception as e:
@@ -523,16 +582,26 @@ def main():
             # Select between custom date range and quarterly date range
             date_mode = st.radio("Choose Date Input Mode", ["Custom Date Range", "Quarterly Date Range"])
             
+            # Initialize date_period variable for display
+            date_period = None
+            
             if date_mode == "Custom Date Range":
                 # Use default custom dates
                 default_start = datetime.strptime("2024-01-31", "%Y-%m-%d")
                 default_end = datetime.strptime("2024-03-31", "%Y-%m-%d")
                 start_date = st.date_input("Start Date", value=default_start)
                 end_date = st.date_input("End Date", value=default_end)
+                
+                # Create a custom date range label for display
+                date_period = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
             else:
                 # Quarterly Date Range input
                 quarter = st.selectbox("Select Quarter", ["Q1", "Q2", "Q3", "Q4"])
                 year = st.number_input("Year", min_value=2000, value=2024, step=1)
+                
+                # Set date period label
+                date_period = f"{quarter} {year}"
+                
                 if quarter == "Q1":
                     start_date = datetime(year, 1, 1)
                     end_date = datetime(year, 3, 31)
@@ -557,6 +626,7 @@ def main():
             st.write("District ID:", trigger_points)
             st.write("Start Date:", start_datetime)
             st.write("End Date:", end_datetime)
+            st.write("Date Period:", date_period)
             st.write("Room Types:", room_types)
             st.write("Headers:", get_headers())
         
@@ -586,7 +656,8 @@ def main():
                     with st.expander("Raw Combined API Response"):
                         st.json(results)
                     
-                    display_results(results)
+                    # Pass the selected district and date period to display_results
+                    display_results(results, selected_district, date_period)
                 else:
                     st.error("Failed to fetch data for one or more room types")
     
