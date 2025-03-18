@@ -7,7 +7,6 @@ import json
 import urllib3
 import time
 import io
-import gc
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,21 +33,6 @@ def load_city_district_data():
             "District_ID": [2204]
         }
         return pd.DataFrame(data)
-
-def clear_session_and_cache():
-    """Clear session state and cache to free up resources"""
-    # Clear session state
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    
-    # Clear cache where possible
-    try:
-        st.cache_data.clear()
-    except:
-        pass
-    
-    # Force garbage collection
-    gc.collect()
 
 def display_city_district_mapping(mapping_data):
     """Display the current city-district mapping data"""
@@ -259,7 +243,7 @@ def display_results(results, selected_district=None, date_period=None):
                     else:
                         # For non-apartments, use the unit name mapping
                         if 'unitName' in row:
-                            return unit_name_descriptions.get(str(row['unitName']).lower(), f"Other: {row['unitName']}")
+                            return unit_name_descriptions.get(row['unitName'], f"Other: {row['unitName']}")
                         else:
                             return f"{row['room_type']} Rooms"
                 except Exception as e:
@@ -504,7 +488,7 @@ def display_results(results, selected_district=None, date_period=None):
             st.dataframe(flattened_df)
         
         # Download options
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             csv = original_df.to_csv(index=False)
@@ -523,13 +507,6 @@ def display_results(results, selected_district=None, date_period=None):
                 file_name="flattened_api_data.csv",
                 mime="text/csv"
             )
-            
-        with col3:
-            # Add clear cookies/session button directly in the results area too
-            if st.button("Clear Cache & Session", key="clear_within_results"):
-                clear_session_and_cache()
-                st.success("Cache and session data cleared!")
-                st.info("Refresh the page to reset the app completely.")
             
     except Exception as e:
         st.error(f"Error processing results: {str(e)}")
@@ -569,7 +546,7 @@ def main():
             # District selection mode
             district_mode = st.radio(
                 "District Selection Mode", 
-                ["Single District", "Multiple Districts (Up to 10)"]
+                ["Single District", "Multiple Districts (Up to 10)", "All Districts"]
             )
             
             # District selection based on the chosen mode
@@ -588,7 +565,7 @@ def main():
                     'id': trigger_points
                 }]
                 
-            else:  # "Multiple Districts (Up to 10)"
+            elif district_mode == "Multiple Districts (Up to 10)":
                 # Multiple district selection (up to 10)
                 district_list = city_districts['District_Name'].tolist()
                 
@@ -617,11 +594,24 @@ def main():
                     st.write("Selected Districts:")
                     district_df = pd.DataFrame(selected_districts)
                     st.dataframe(district_df)
+            
+            else:  # "All Districts"
+                # All districts selection
+                total_districts = len(city_districts)
+                st.info(f"City ID: {city_id}, All districts ({total_districts}) will be processed")
+                
+                # Create a list of all districts with their IDs
+                selected_districts = []
+                for _, district_row in city_districts.iterrows():
+                    selected_districts.append({
+                        'name': district_row["District_Name"],
+                        'id': int(district_row["District_ID"])
+                    })
                 
                 # Configure delay between district requests
                 delay_seconds = st.slider("Delay between district requests (seconds)", 
-                                        min_value=2, max_value=30, value=5, 
-                                        help="Adjust delay to avoid API rate limiting")
+                                        min_value=5, max_value=30, value=15, 
+                                        help="Longer delays reduce the chance of API rate limiting")
             
             # Inject custom CSS to support Arabic fonts
             st.markdown(
@@ -700,10 +690,12 @@ def main():
             if district_mode == "Single District":
                 st.write("District:", selected_district)
                 st.write("District ID:", trigger_points)
-            else:  # Multiple Districts
+            elif district_mode == "Multiple Districts (Up to 10)":
                 st.write("Selected Districts:")
                 if selected_districts:
                     st.dataframe(pd.DataFrame(selected_districts))
+            else:  # All Districts
+                st.write(f"All Districts ({len(selected_districts)})")
                 
             st.write("Start Date:", start_datetime)
             st.write("End Date:", end_datetime)
@@ -756,10 +748,15 @@ def main():
                         st.error(f"Failed to retrieve data for {current_district_name}")
                     
                     # Wait before processing the next district (except for the last one)
-                    if idx < total_districts - 1 and district_mode == "Multiple Districts (Up to 10)":
+                    if idx < total_districts - 1 and district_mode == "All Districts":
                         wait_msg = f"Waiting {delay_seconds} seconds before processing the next district..."
                         with st.spinner(wait_msg):
                             time.sleep(delay_seconds)
+                    elif idx < total_districts - 1 and district_mode == "Multiple Districts (Up to 10)":
+                        # Use a shorter delay for multiple selected districts
+                        wait_msg = "Waiting 5 seconds before processing the next district..."
+                        with st.spinner(wait_msg):
+                            time.sleep(5)
                 
                 # Complete the district progress bar
                 district_progress.progress(1.0)
@@ -778,23 +775,17 @@ def main():
                         None,  # Don't override district names since they're already in the data
                         date_period
                     )
-                    
-                    # Add button to clear cache/session after user has downloaded the data
-                    if st.button("Clear Cache & Session Data"):
-                        clear_session_and_cache()
-                        st.success("Cache and session data cleared successfully!")
-                        st.info("You may need to refresh the page to completely reset the application.")
                 else:
                     st.error("Failed to fetch any data. Please try again with different parameters or check network connectivity.")
     
     with tab2:
         st.header("About this application")
         st.write("""
-        This application extracts rental data for Multiple room types from the Rega API service.
+        This application extracts rental data for multiple room types from the Rega API service.
         
         ### Features:
         - Extract data for multiple room types in a single operation
-        - Fetch data for a single district or multiple selected districts (up to 10)
+        - Fetch data for a single district, multiple selected districts (up to 10), or all districts in a city
         - Combine results into a single downloadable dataset
         - Support for custom date ranges or quarterly periods
         - User-friendly city and district selection
@@ -807,8 +798,9 @@ def main():
         
         ### Tips:
         - If requests fail, try with fewer room types at once
-        - For multiple districts, adjust the delay between requests as needed
-        - If you encounter rate limits, increase the delay between requests
+        - When fetching all districts, use a longer delay (15+ seconds) to avoid API rate limits
+        - For multiple districts, a 5-second delay is applied between requests
+        - The "All districts" option will take significantly longer to complete
         """)
         
         with st.expander("View City-District Mapping Reference", expanded=False):

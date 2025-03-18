@@ -7,7 +7,6 @@ import json
 import urllib3
 import time
 import io
-import gc
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,21 +33,6 @@ def load_city_district_data():
             "District_ID": [2204]
         }
         return pd.DataFrame(data)
-
-def clear_session_and_cache():
-    """Clear session state and cache to free up resources"""
-    # Clear session state
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    
-    # Clear cache where possible
-    try:
-        st.cache_data.clear()
-    except:
-        pass
-    
-    # Force garbage collection
-    gc.collect()
 
 def display_city_district_mapping(mapping_data):
     """Display the current city-district mapping data"""
@@ -259,7 +243,7 @@ def display_results(results, selected_district=None, date_period=None):
                     else:
                         # For non-apartments, use the unit name mapping
                         if 'unitName' in row:
-                            return unit_name_descriptions.get(str(row['unitName']).lower(), f"Other: {row['unitName']}")
+                            return unit_name_descriptions.get(row['unitName'], f"Other: {row['unitName']}")
                         else:
                             return f"{row['room_type']} Rooms"
                 except Exception as e:
@@ -504,7 +488,7 @@ def display_results(results, selected_district=None, date_period=None):
             st.dataframe(flattened_df)
         
         # Download options
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             csv = original_df.to_csv(index=False)
@@ -523,13 +507,6 @@ def display_results(results, selected_district=None, date_period=None):
                 file_name="flattened_api_data.csv",
                 mime="text/csv"
             )
-            
-        with col3:
-            # Add clear cookies/session button directly in the results area too
-            if st.button("Clear Cache & Session", key="clear_within_results"):
-                clear_session_and_cache()
-                st.success("Cache and session data cleared!")
-                st.info("Refresh the page to reset the app completely.")
             
     except Exception as e:
         st.error(f"Error processing results: {str(e)}")
@@ -565,63 +542,10 @@ def main():
             
             # Filter districts for the selected city
             city_districts = mapping_data[mapping_data['City'] == selected_city]
-            
-            # District selection mode
-            district_mode = st.radio(
-                "District Selection Mode", 
-                ["Single District", "Multiple Districts (Up to 10)"]
-            )
-            
-            # District selection based on the chosen mode
-            if district_mode == "Single District":
-                # Single district selection
-                district_list = city_districts['District_Name'].tolist()
-                selected_district = st.selectbox("Select District", district_list)
-                
-                # Get the district ID for the selected district
-                trigger_points = int(city_districts[city_districts['District_Name'] == selected_district]['District_ID'].iloc[0])
-                st.info(f"City ID: {city_id}, District ID: {trigger_points}")
-                
-                # Store selected districts in a list for processing
-                selected_districts = [{
-                    'name': selected_district,
-                    'id': trigger_points
-                }]
-                
-            else:  # "Multiple Districts (Up to 10)"
-                # Multiple district selection (up to 10)
-                district_list = city_districts['District_Name'].tolist()
-                
-                # Use multiselect with max selections limit
-                selected_district_names = st.multiselect(
-                    "Select Districts (Max 10)", 
-                    district_list,
-                    max_selections=10
-                )
-                
-                if len(selected_district_names) == 0:
-                    st.warning("Please select at least one district")
-                    selected_districts = []
-                else:
-                    # Create a list of districts with their IDs
-                    selected_districts = []
-                    for district_name in selected_district_names:
-                        district_id = int(city_districts[city_districts['District_Name'] == district_name]['District_ID'].iloc[0])
-                        selected_districts.append({
-                            'name': district_name,
-                            'id': district_id
-                        })
-                    
-                    # Display selected districts and their IDs
-                    st.info(f"City ID: {city_id}")
-                    st.write("Selected Districts:")
-                    district_df = pd.DataFrame(selected_districts)
-                    st.dataframe(district_df)
-                
-                # Configure delay between district requests
-                delay_seconds = st.slider("Delay between district requests (seconds)", 
-                                        min_value=2, max_value=30, value=5, 
-                                        help="Adjust delay to avoid API rate limiting")
+          
+            # Add "All" option to district dropdown
+            district_list = city_districts['District_Name'].tolist()
+            district_options = ["All"] + district_list
             
             # Inject custom CSS to support Arabic fonts
             st.markdown(
@@ -635,6 +559,16 @@ def main():
                 """,
                 unsafe_allow_html=True
                 )
+            
+            selected_district = st.selectbox("Select District", district_options)
+            
+            # If a specific district is selected, get its ID; otherwise, note that "All" is selected
+            if selected_district != "All":
+                trigger_points = int(city_districts[city_districts['District_Name'] == selected_district]['District_ID'].iloc[0])
+                st.info(f"City ID: {city_id}, District ID: {trigger_points}")
+            else:
+                trigger_points = None  # No specific district ID when 'All' is selected
+                st.info(f"City ID: {city_id}, All districts selected")
             
             # Room type selection (checkbox for each type)
             st.subheader("Select Room Types")
@@ -650,6 +584,12 @@ def main():
             
             if not room_types:
                 st.warning("Please select at least one room type")
+                
+            # Configure delay between district requests when "All" is selected
+            if selected_district == "All":
+                delay_seconds = st.slider("Delay between district requests (seconds)", 
+                                         min_value=5, max_value=30, value=15, 
+                                         help="Longer delays reduce the chance of API rate limiting")
         
         with col2:
             # Select between custom date range and quarterly date range
@@ -695,75 +635,88 @@ def main():
         with st.expander("Show Request Information", expanded=False):
             st.write("City:", selected_city)
             st.write("City ID:", city_id)
-            st.write("District Mode:", district_mode)
-            
-            if district_mode == "Single District":
-                st.write("District:", selected_district)
+            st.write("District:", selected_district)
+            if selected_district != "All":
                 st.write("District ID:", trigger_points)
-            else:  # Multiple Districts
-                st.write("Selected Districts:")
-                if selected_districts:
-                    st.dataframe(pd.DataFrame(selected_districts))
-                
             st.write("Start Date:", start_datetime)
             st.write("End Date:", end_datetime)
             st.write("Date Period:", date_period)
             st.write("Room Types:", room_types)
             st.write("Headers:", get_headers())
         
-        if st.button("Fetch Data for All Selected Room Types", type="primary") and room_types and selected_districts:
+        if st.button("Fetch Data for All Selected Room Types", type="primary") and room_types:
             with st.spinner("Fetching data..."):
                 results = []
                 
-                # Create progress bars
-                district_progress = st.progress(0)
-                district_status = st.empty()
-                room_progress = st.empty()
-                room_progress_bar = st.progress(0)
-                
-                # Iterate through each selected district
-                total_districts = len(selected_districts)
-                
-                for idx, district_data in enumerate(selected_districts):
-                    current_district_name = district_data["name"]
-                    current_district_id = district_data["id"]
+                if selected_district == "All":
+                    # If "All" is selected, iterate through all districts in the city
+                    total_districts = len(city_districts)
+                    st.warning(f"Fetching data for all {total_districts} districts. This may take some time.")
                     
-                    # Update district progress
-                    district_progress.progress((idx) / total_districts)
-                    district_status.info(f"Processing district {idx+1}/{total_districts}: {current_district_name} (ID: {current_district_id})")
+                    # Create progress bars
+                    district_progress = st.progress(0)
+                    district_status = st.empty()
+                    room_progress = st.empty()
+                    room_progress_bar = st.progress(0)
                     
-                    # Fetch data for all room types in this district
-                    district_results = fetch_all_room_types(
+                    # Iterate through each district
+                    for idx, (_, district_row) in enumerate(city_districts.iterrows()):
+                        current_district_name = district_row["District_Name"]
+                        current_district_id = int(district_row["District_ID"])
+                        
+                        # Update district progress
+                        district_progress.progress((idx) / total_districts)
+                        district_status.info(f"Processing district {idx+1}/{total_districts}: {current_district_name} (ID: {current_district_id})")
+                        
+                        # Fetch data for all room types in this district
+                        district_results = fetch_all_room_types(
+                            city_id,
+                            start_datetime,
+                            end_datetime,
+                            room_types,
+                            current_district_id,
+                            room_progress_bar
+                        )
+                        
+                        # Add the current district name to each record
+                        for record in district_results:
+                            record['district_name'] = current_district_name
+                            record['district_id'] = current_district_id
+                        
+                        results.extend(district_results)
+                        
+                        # Report success or failure for this district
+                        if district_results:
+                            st.success(f"Retrieved {len(district_results)} records for {current_district_name}")
+                        else:
+                            st.error(f"Failed to retrieve data for {current_district_name}")
+                        
+                        # Wait before processing the next district (except for the last one)
+                        if idx < total_districts - 1:
+                            wait_msg = f"Waiting {delay_seconds} seconds before processing the next district..."
+                            with st.spinner(wait_msg):
+                                time.sleep(delay_seconds)
+                    
+                    # Complete the district progress bar
+                    district_progress.progress(1.0)
+                    district_status.success(f"Completed processing all {total_districts} districts!")
+                    
+                else:
+                    # Single district case
+                    progress_bar = st.empty()
+                    progress_bar_placeholder = st.progress(0)
+                    
+                    results = fetch_all_room_types(
                         city_id,
                         start_datetime,
                         end_datetime,
                         room_types,
-                        current_district_id,
-                        room_progress_bar
+                        trigger_points,
+                        progress_bar
                     )
                     
-                    # Add the current district name to each record
-                    for record in district_results:
-                        record['district_name'] = current_district_name
-                        record['district_id'] = current_district_id
-                    
-                    results.extend(district_results)
-                    
-                    # Report success or failure for this district
-                    if district_results:
-                        st.success(f"Retrieved {len(district_results)} records for {current_district_name}")
-                    else:
-                        st.error(f"Failed to retrieve data for {current_district_name}")
-                    
-                    # Wait before processing the next district (except for the last one)
-                    if idx < total_districts - 1 and district_mode == "Multiple Districts (Up to 10)":
-                        wait_msg = f"Waiting {delay_seconds} seconds before processing the next district..."
-                        with st.spinner(wait_msg):
-                            time.sleep(delay_seconds)
-                
-                # Complete the district progress bar
-                district_progress.progress(1.0)
-                district_status.success(f"Completed processing all selected districts!")
+                    progress_bar.empty()
+                    progress_bar_placeholder.empty()
                 
                 # Process and display results
                 if results:
@@ -775,26 +728,20 @@ def main():
                     # Pass the district information to display_results
                     display_results(
                         results, 
-                        None,  # Don't override district names since they're already in the data
+                        None if selected_district == "All" else selected_district,  # Don't override district names when "All" is selected
                         date_period
                     )
-                    
-                    # Add button to clear cache/session after user has downloaded the data
-                    if st.button("Clear Cache & Session Data"):
-                        clear_session_and_cache()
-                        st.success("Cache and session data cleared successfully!")
-                        st.info("You may need to refresh the page to completely reset the application.")
                 else:
                     st.error("Failed to fetch any data. Please try again with different parameters or check network connectivity.")
     
     with tab2:
         st.header("About this application")
         st.write("""
-        This application extracts rental data for Multiple room types from the Rega API service.
+        This application extracts rental data for multiple room types from the Rega API service.
         
         ### Features:
         - Extract data for multiple room types in a single operation
-        - Fetch data for a single district or multiple selected districts (up to 10)
+        - Fetch data for either a single district or all districts in a city
         - Combine results into a single downloadable dataset
         - Support for custom date ranges or quarterly periods
         - User-friendly city and district selection
@@ -807,8 +754,8 @@ def main():
         
         ### Tips:
         - If requests fail, try with fewer room types at once
-        - For multiple districts, adjust the delay between requests as needed
-        - If you encounter rate limits, increase the delay between requests
+        - When fetching all districts, use a longer delay (15+ seconds) to avoid API rate limits
+        - The "All districts" option will take significantly longer to complete
         """)
         
         with st.expander("View City-District Mapping Reference", expanded=False):
