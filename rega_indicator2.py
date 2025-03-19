@@ -85,15 +85,16 @@ def get_headers():
     }
 
 def fetch_api_data(city_id, start_date, end_date, total_rooms, trigger_points):
-    """Fetch data from the API with exact payload format and retry on 429 errors"""
+    """Fetch data from the API with exact payload format and improved error handling"""
     url = "https://rentalrei.rega.gov.sa/RegaIndicatorsAPIs/api/IndicatorEjar/GetDetailsV2"
     
+    # Format dates consistently with the expected API format
     payload = {
         "cityId": city_id,
         "end_date": end_date.strftime("%Y-%m-%dT18:30:00.000Z"),
-        "end_date2": end_date.strftime("%a %b %d %Y 00:00:00 GMT+0530 (India Standard Time)"),
+        "end_date2": end_date.strftime("%a %b %d %Y 00:00:00 GMT+0300 (Arabian Standard Time)"),
         "strt_date": start_date.strftime("%Y-%m-%dT18:30:00.000Z"),
-        "strt_date2": start_date.strftime("%a %b %d %Y 00:00:00 GMT+0530 (India Standard Time)"),
+        "strt_date2": start_date.strftime("%a %b %d %Y 00:00:00 GMT+0300 (Arabian Standard Time)"),
         "totalRooms": total_rooms,
         "trigger_Points": str(trigger_points)
     }
@@ -102,7 +103,7 @@ def fetch_api_data(city_id, start_date, end_date, total_rooms, trigger_points):
     with st.container():
         debug_container.write(f"Fetching data for {total_rooms} rooms...")
     
-    retries = 3
+    retries = 5  # Increased from 3 to 5
     backoff = 10  # initial delay in seconds
     
     for attempt in range(1, retries + 1):
@@ -112,7 +113,7 @@ def fetch_api_data(city_id, start_date, end_date, total_rooms, trigger_points):
                 json=payload,
                 headers=get_headers(),
                 verify=False,
-                timeout=30
+                timeout=45  # Increased timeout
             )
             
             # Check for rate limiting (status code 429)
@@ -120,6 +121,19 @@ def fetch_api_data(city_id, start_date, end_date, total_rooms, trigger_points):
                 debug_container.write(f"Rate limit reached (attempt {attempt}/{retries}). Waiting {backoff} seconds...")
                 time.sleep(backoff)
                 backoff *= 2  # exponential backoff
+                continue
+            
+            # Check for specific error codes that might indicate an issue with the room type
+            if response.status_code == 400:
+                debug_container.write(f"Bad request error for {total_rooms} rooms (attempt {attempt}/{retries}). This room type may not be available for this district.")
+                
+                # For 400 errors, try a slightly modified payload as a workaround
+                if attempt > 1:
+                    # Try alternate date format on subsequent attempts
+                    payload["end_date"] = end_date.strftime("%Y-%m-%dT21:30:00.000Z")
+                    payload["strt_date"] = start_date.strftime("%Y-%m-%dT21:30:00.000Z")
+                
+                time.sleep(backoff)
                 continue
                 
             response.raise_for_status()
@@ -146,18 +160,33 @@ def fetch_api_data(city_id, start_date, end_date, total_rooms, trigger_points):
                 time.sleep(backoff)
                 backoff *= 2  # exponential backoff
             else:
-                st.error(f"HTTP error fetching data for {total_rooms} rooms: {str(e)}")
-                return []
+                # Log the response content for debugging
+                error_msg = f"HTTP error ({response.status_code}) fetching data for {total_rooms} rooms: {str(e)}"
+                try:
+                    error_msg += f"\nResponse: {response.text[:500]}"  # Get first 500 chars of response
+                except:
+                    pass
+                st.error(error_msg)
+                
+                # For client errors, don't retry
+                if 400 <= response.status_code < 500:
+                    if attempt == retries:
+                        debug_container.empty()
+                        return []
+                else:
+                    time.sleep(backoff)
         except requests.exceptions.RequestException as e:
             st.error(f"Error fetching data for {total_rooms} rooms: {str(e)}")
-            return []
+            time.sleep(backoff)
     
-    st.error(f"Failed to fetch data for {total_rooms} rooms after {retries} attempts.")
+    debug_container.empty()
+    st.warning(f"Could not fetch data for {total_rooms} rooms after {retries} attempts. Skipping.")
     return []
 
 def fetch_all_room_types(city_id, start_date, end_date, room_types, trigger_points, progress_bar):
-    """Fetch data for all specified room types and combine results"""
+    """Fetch data for all specified room types with improved reliability and error handling"""
     all_results = []
+    skipped_room_types = []
     
     for i, room_type in enumerate(room_types):
         progress_text = f"Fetching data for {room_type} rooms ({i+1}/{len(room_types)})..."
@@ -172,7 +201,10 @@ def fetch_all_room_types(city_id, start_date, end_date, room_types, trigger_poin
         )
         
         if result:
-            # Add room type information to each record by creating a new list with modified copies
+            # Log success
+            st.success(f"✓ Successfully fetched data for {room_type} rooms")
+            
+            # Add room type information to each record
             modified_result = []
             for record in result:
                 # Create a copy of the record to avoid modifying the original
@@ -181,12 +213,20 @@ def fetch_all_room_types(city_id, start_date, end_date, room_types, trigger_poin
                 modified_result.append(record_copy)
             
             all_results.extend(modified_result)
+        else:
+            # Log failure but continue with other room types
+            st.warning(f"✗ Failed to fetch data for {room_type} rooms - this room type may not be available for this district")
+            skipped_room_types.append(room_type)
         
         # Update progress
         progress_bar.progress((i + 1) / len(room_types))
         
-        # Small delay to avoid overwhelming the API
-        time.sleep(1)
+        # Add small delay to avoid overwhelming the API
+        time.sleep(10)
+    
+    # If we have skipped room types, show summary
+    if skipped_room_types:
+        st.warning(f"Skipped room types: {skipped_room_types}")
     
     return all_results
 
@@ -313,18 +353,12 @@ def display_results(results, selected_district=None, date_period=None):
                         apartments_dedup = apartments_df
                     
                     # Process non-apartments - simpler, just keep one row per unitName
+                    # Process non-apartments - keep one record per combination of district_name and unitName
                     non_apartments_df = df[~apartment_mask]
                     if not non_apartments_df.empty:
-                        # Keep just one record per unitName
                         try:
-                            unique_unit_names = non_apartments_df['unitName'].unique()
-                            non_apartments_dedup_rows = []
-                            for unit_name in unique_unit_names:
-                                matching_rows = non_apartments_df[non_apartments_df['unitName'] == unit_name]
-                                if not matching_rows.empty:
-                                    non_apartments_dedup_rows.append(matching_rows.iloc[0])
-                                    
-                            non_apartments_dedup = pd.DataFrame(non_apartments_dedup_rows)
+                            # Group by both 'district_name' and 'unitName' and take the first record from each group
+                            non_apartments_dedup = non_apartments_df.groupby(['district_name', 'unitName'], as_index=False).first()
                         except Exception as e:
                             st.warning(f"Error deduplicating non-apartments: {str(e)}")
                             non_apartments_dedup = non_apartments_df
@@ -538,6 +572,103 @@ def display_results(results, selected_district=None, date_period=None):
         st.error(traceback.format_exc())
         st.json(results)  # Display raw JSON as fallback
 
+def process_multiple_districts(selected_districts, city_id, start_datetime, end_datetime, 
+                               room_types, delay_seconds, date_period):
+    """Process multiple districts with improved rate limit handling"""
+    results = []
+    processed_districts = []
+    skipped_districts = []
+    
+    # Create progress bars
+    district_progress = st.progress(0)
+    district_status = st.empty()
+    room_progress = st.empty()
+    room_progress_bar = st.progress(0)
+    
+    # Iterate through each selected district
+    total_districts = len(selected_districts)
+    
+    for idx, district_data in enumerate(selected_districts):
+        current_district_name = district_data["name"]
+        current_district_id = district_data["id"]
+        
+        # Update district progress
+        district_progress.progress((idx) / total_districts)
+        district_status.info(f"Processing district {idx+1}/{total_districts}: {current_district_name} (ID: {current_district_id})")
+        
+        # Track rate limiting throughout the entire process
+        rate_limited = False
+        rate_limit_count = 0
+        max_rate_limit_retries = 3
+        
+        # Fetch data for all room types in this district
+        try:
+            district_results = fetch_all_room_types(
+                city_id,
+                start_datetime,
+                end_datetime,
+                room_types,
+                current_district_id,
+                room_progress_bar
+            )
+            
+            # Add the current district name to each record
+            for record in district_results:
+                record['district_name'] = current_district_name
+                record['district_id'] = current_district_id
+            
+            results.extend(district_results)
+            
+            # Report success or failure for this district
+            if district_results:
+                st.success(f"Retrieved {len(district_results)} records for {current_district_name}")
+                processed_districts.append(current_district_name)
+            else:
+                st.error(f"Failed to retrieve data for {current_district_name}")
+                skipped_districts.append(current_district_name)
+        
+        except Exception as e:
+            st.error(f"Error processing district {current_district_name}: {str(e)}")
+            skipped_districts.append(current_district_name)
+            
+            # Check if this seems to be a rate limiting issue
+            if "429" in str(e) or "rate limit" in str(e).lower():
+                rate_limited = True
+                rate_limit_count += 1
+                
+                if rate_limit_count <= max_rate_limit_retries:
+                    # Calculate a longer backoff period
+                    extended_delay = delay_seconds * (2 ** rate_limit_count)
+                    st.warning(f"Rate limit detected. Waiting {extended_delay} seconds before continuing...")
+                    time.sleep(extended_delay)
+                    
+                    # Try this district again (decrement the index)
+                    idx -= 1
+                    continue
+        
+        # Wait before processing the next district (except for the last one)
+        if idx < total_districts - 1:
+            # Adjust delay if we hit rate limits
+            current_delay = delay_seconds
+            if rate_limited:
+                current_delay = delay_seconds * 2
+            
+            wait_msg = f"Waiting {current_delay} seconds before processing the next district..."
+            with st.spinner(wait_msg):
+                time.sleep(current_delay)
+    
+    # Complete the district progress bar
+    district_progress.progress(1.0)
+    
+    # Provide summary of processing
+    if processed_districts:
+        district_status.success(f"Successfully processed {len(processed_districts)} districts: {', '.join(processed_districts)}")
+    
+    if skipped_districts:
+        st.warning(f"Skipped {len(skipped_districts)} districts: {', '.join(skipped_districts)}")
+    
+    return results
+
 def main():
     st.set_page_config(page_title="Rental Real Estate Indicator Data", layout="wide")
     st.title("📊 Rental Real Estate Indicator Data")
@@ -653,40 +784,40 @@ def main():
         
         with col2:
             # Select between custom date range and quarterly date range
-            date_mode = st.radio("Choose Date Input Mode", ["Custom Date Range", "Quarterly Date Range"])
+            date_mode = st.radio("Choose Date Input Mode", ["Quarterly Date Range"])
             
             # Initialize date_period variable for display
             date_period = None
             
-            if date_mode == "Custom Date Range":
-                # Use default custom dates
-                default_start = datetime.strptime("2024-01-31", "%Y-%m-%d")
-                default_end = datetime.strptime("2024-03-31", "%Y-%m-%d")
-                start_date = st.date_input("Start Date", value=default_start)
-                end_date = st.date_input("End Date", value=default_end)
+            # if date_mode == "Custom Date Range":
+            #     # Use default custom dates
+            #     default_start = datetime.strptime("2024-01-31", "%Y-%m-%d")
+            #     default_end = datetime.strptime("2024-03-31", "%Y-%m-%d")
+            #     start_date = st.date_input("Start Date", value=default_start)
+            #     end_date = st.date_input("End Date", value=default_end)
                 
-                # Create a custom date range label for display
-                date_period = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
-            else:
+            #     # Create a custom date range label for display
+            #     date_period = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+            # else:
                 # Quarterly Date Range input
-                quarter = st.selectbox("Select Quarter", ["Q1", "Q2", "Q3", "Q4"])
-                year = st.number_input("Year", min_value=2000, value=2024, step=1)
+            quarter = st.selectbox("Select Quarter", ["Q1", "Q2", "Q3", "Q4"])
+            year = st.number_input("Year", min_value=2000, value=2024, step=1)
+            
+            # Set date period label
+            date_period = f"{quarter} {year}"
                 
-                # Set date period label
-                date_period = f"{quarter} {year}"
-                
-                if quarter == "Q1":
-                    start_date = datetime(year, 1, 1)
-                    end_date = datetime(year, 3, 31)
-                elif quarter == "Q2":
-                    start_date = datetime(year, 4, 1)
-                    end_date = datetime(year, 6, 30)
-                elif quarter == "Q3":
-                    start_date = datetime(year, 7, 1)
-                    end_date = datetime(year, 9, 30)
-                else:  # Q4
-                    start_date = datetime(year, 10, 1)
-                    end_date = datetime(year, 12, 31)
+            if quarter == "Q1":
+                start_date = datetime(year, 1, 1)
+                end_date = datetime(year, 3, 31)
+            elif quarter == "Q2":
+                start_date = datetime(year, 4, 1)
+                end_date = datetime(year, 6, 30)
+            elif quarter == "Q3":
+                start_date = datetime(year, 7, 1)
+                end_date = datetime(year, 9, 30)
+            else:  # Q4
+                start_date = datetime(year, 10, 1)
+                end_date = datetime(year, 12, 31)
         
         # Combine the date with the minimum time to form a datetime object
         start_datetime = datetime.combine(start_date, datetime.min.time())
@@ -713,57 +844,16 @@ def main():
         
         if st.button("Fetch Data for All Selected Room Types", type="primary") and room_types and selected_districts:
             with st.spinner("Fetching data..."):
-                results = []
-                
-                # Create progress bars
-                district_progress = st.progress(0)
-                district_status = st.empty()
-                room_progress = st.empty()
-                room_progress_bar = st.progress(0)
-                
-                # Iterate through each selected district
-                total_districts = len(selected_districts)
-                
-                for idx, district_data in enumerate(selected_districts):
-                    current_district_name = district_data["name"]
-                    current_district_id = district_data["id"]
-                    
-                    # Update district progress
-                    district_progress.progress((idx) / total_districts)
-                    district_status.info(f"Processing district {idx+1}/{total_districts}: {current_district_name} (ID: {current_district_id})")
-                    
-                    # Fetch data for all room types in this district
-                    district_results = fetch_all_room_types(
-                        city_id,
-                        start_datetime,
-                        end_datetime,
-                        room_types,
-                        current_district_id,
-                        room_progress_bar
-                    )
-                    
-                    # Add the current district name to each record
-                    for record in district_results:
-                        record['district_name'] = current_district_name
-                        record['district_id'] = current_district_id
-                    
-                    results.extend(district_results)
-                    
-                    # Report success or failure for this district
-                    if district_results:
-                        st.success(f"Retrieved {len(district_results)} records for {current_district_name}")
-                    else:
-                        st.error(f"Failed to retrieve data for {current_district_name}")
-                    
-                    # Wait before processing the next district (except for the last one)
-                    if idx < total_districts - 1 and district_mode == "Multiple Districts (Up to 10)":
-                        wait_msg = f"Waiting {delay_seconds} seconds before processing the next district..."
-                        with st.spinner(wait_msg):
-                            time.sleep(delay_seconds)
-                
-                # Complete the district progress bar
-                district_progress.progress(1.0)
-                district_status.success(f"Completed processing all selected districts!")
+                # Use the new function to process multiple districts
+                results = process_multiple_districts(
+                    selected_districts, 
+                    city_id, 
+                    start_datetime, 
+                    end_datetime, 
+                    room_types, 
+                    delay_seconds,
+                    date_period
+                )
                 
                 # Process and display results
                 if results:
