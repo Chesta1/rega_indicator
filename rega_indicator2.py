@@ -546,7 +546,8 @@ def display_results(results, selected_district=None, date_period=None):
                 label="Download Original CSV",
                 data=csv,
                 file_name="original_api_data.csv",
-                mime="text/csv"
+                mime="text/csv",
+                key="original_csv_button"
             )
             
         with col2:
@@ -555,7 +556,8 @@ def display_results(results, selected_district=None, date_period=None):
                 label="Download Flattened CSV",
                 data=flattened_csv,
                 file_name="flattened_api_data.csv",
-                mime="text/csv"
+                mime="text/csv",
+                key="flattened_csv_button"
             )
             
         with col3:
@@ -833,14 +835,14 @@ def main():
             st.write("City ID:", city_id)
             st.write("District Mode:", district_mode)
             
-            if district_mode == "Single District":
-                st.write("District:", selected_district)
-                st.write("District ID:", trigger_points)
-            else:  # Multiple Districts
-                st.write("Selected Districts:")
-                if selected_districts:
-                    st.dataframe(pd.DataFrame(selected_districts))
-                
+            # if district_mode == "Single District":
+            #     st.write("District:", selected_district)
+            #     st.write("District ID:", trigger_points)
+            # else:  # Multiple Districts
+            st.write("Selected Districts:")
+            if selected_districts:
+                st.dataframe(pd.DataFrame(selected_districts))
+            
             st.write("Start Date:", start_datetime)
             st.write("End Date:", end_datetime)
             st.write("Date Period:", date_period)
