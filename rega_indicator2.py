@@ -698,56 +698,61 @@ def main():
             city_districts = mapping_data[mapping_data['City'] == selected_city]
             
             # District selection mode
+            # district_mode = st.radio(
+            #     "District Selection Mode", 
+            #     ["Single District", "Multiple Districts (Up to 10)"]
+            # )
+
             district_mode = st.radio(
                 "District Selection Mode", 
-                ["Single District", "Multiple Districts (Up to 10)"]
+                ["Multiple Districts (Up to 10)"]
             )
             
-            # District selection based on the chosen mode
-            if district_mode == "Single District":
-                # Single district selection
-                district_list = city_districts['District_Name'].tolist()
-                selected_district = st.selectbox("Select District", district_list)
+            # # District selection based on the chosen mode
+            # if district_mode == "Single District":
+            #     # Single district selection
+            #     district_list = city_districts['District_Name'].tolist()
+            #     selected_district = st.selectbox("Select District", district_list)
                 
-                # Get the district ID for the selected district
-                trigger_points = int(city_districts[city_districts['District_Name'] == selected_district]['District_ID'].iloc[0])
-                st.info(f"City ID: {city_id}, District ID: {trigger_points}")
+            #     # Get the district ID for the selected district
+            #     trigger_points = int(city_districts[city_districts['District_Name'] == selected_district]['District_ID'].iloc[0])
+            #     st.info(f"City ID: {city_id}, District ID: {trigger_points}")
                 
-                # Store selected districts in a list for processing
-                selected_districts = [{
-                    'name': selected_district,
-                    'id': trigger_points
-                }]
+            #     # Store selected districts in a list for processing
+            #     selected_districts = [{
+            #         'name': selected_district,
+            #         'id': trigger_points
+            #     }]
                 
-            else:  # "Multiple Districts (Up to 10)"
+            # else:  # "Multiple Districts (Up to 10)"
                 # Multiple district selection (up to 10)
-                district_list = city_districts['District_Name'].tolist()
+            district_list = city_districts['District_Name'].tolist()
+            
+            # Use multiselect with max selections limit
+            selected_district_names = st.multiselect(
+                "Select Districts (Max 10)", 
+                district_list,
+                max_selections=10
+            )
                 
-                # Use multiselect with max selections limit
-                selected_district_names = st.multiselect(
-                    "Select Districts (Max 10)", 
-                    district_list,
-                    max_selections=10
-                )
+            if len(selected_district_names) == 0:
+                st.warning("Please select at least one district")
+                selected_districts = []
+            else:
+                # Create a list of districts with their IDs
+                selected_districts = []
+                for district_name in selected_district_names:
+                    district_id = int(city_districts[city_districts['District_Name'] == district_name]['District_ID'].iloc[0])
+                    selected_districts.append({
+                        'name': district_name,
+                        'id': district_id
+                    })
                 
-                if len(selected_district_names) == 0:
-                    st.warning("Please select at least one district")
-                    selected_districts = []
-                else:
-                    # Create a list of districts with their IDs
-                    selected_districts = []
-                    for district_name in selected_district_names:
-                        district_id = int(city_districts[city_districts['District_Name'] == district_name]['District_ID'].iloc[0])
-                        selected_districts.append({
-                            'name': district_name,
-                            'id': district_id
-                        })
-                    
-                    # Display selected districts and their IDs
-                    st.info(f"City ID: {city_id}")
-                    st.write("Selected Districts:")
-                    district_df = pd.DataFrame(selected_districts)
-                    st.dataframe(district_df)
+                # Display selected districts and their IDs
+                st.info(f"City ID: {city_id}")
+                st.write("Selected Districts:")
+                district_df = pd.DataFrame(selected_districts)
+                st.dataframe(district_df)
                 
                 # Configure delay between district requests
                 delay_seconds = st.slider("Delay between district requests (seconds)", 
