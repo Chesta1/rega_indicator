@@ -8,6 +8,7 @@ import urllib3
 import time
 import io
 import gc
+import zipfile
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -536,37 +537,29 @@ def display_results(results, selected_district=None, date_period=None):
             
         with tab2:
             st.dataframe(flattened_df)
-        
-        # Download options
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            csv = original_df.to_csv(index=False)
-            st.download_button(
-                label="Download Original CSV",
-                data=csv,
-                file_name="original_api_data.csv",
-                mime="text/csv",
-                key="original_csv_button"
-            )
-            
-        with col2:
-            flattened_csv = flattened_df.to_csv(index=False)
-            st.download_button(
-                label="Download Flattened CSV",
-                data=flattened_csv,
-                file_name="flattened_api_data.csv",
-                mime="text/csv",
-                key="flattened_csv_button"
-            )
-            
-        # with col3:
-        #     # Add clear cookies/session button directly in the results area too
-        #     if st.button("Clear Cache & Session", key="clear_within_results"):
-        #         clear_session_and_cache()
-        #         st.success("Cache and session data cleared!")
-        #         st.info("Refresh the page to reset the app completely.")
-            
+       
+        st.markdown("### Download Data")
+
+# Create ZIP file with both CSVs
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Add original CSV
+            zf.writestr("original_api_data.csv", original_df.to_csv(index=False))
+            # Add flattened CSV
+            zf.writestr("flattened_api_data.csv", flattened_df.to_csv(index=False))
+
+        # Reset buffer position
+        zip_buffer.seek(0)
+
+        # Create download button for ZIP
+        st.download_button(
+            label="Download Both CSVs",
+            data=zip_buffer,
+            file_name="api_data_export.zip",
+            mime="application/zip",
+            key="both_csv_button"
+        )
+                    
     except Exception as e:
         st.error(f"Error processing results: {str(e)}")
         # Print more detailed error information
@@ -877,10 +870,10 @@ def main():
                     )
                     
                     # Add button to clear cache/session after user has downloaded the data
-                    if st.button("Clear Cache & Session Data"):
-                        clear_session_and_cache()
-                        st.success("Cache and session data cleared successfully!")
-                        st.info("You may need to refresh the page to completely reset the application.")
+                    # if st.button("Clear Cache & Session Data"):
+                    #     clear_session_and_cache()
+                    #     st.success("Cache and session data cleared successfully!")
+                    #     st.info("You may need to refresh the page to completely reset the application.")
                 else:
                     st.error("Failed to fetch any data. Please try again with different parameters or check network connectivity.")
     
