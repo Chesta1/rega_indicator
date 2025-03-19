@@ -538,7 +538,7 @@ def display_results(results, selected_district=None, date_period=None):
             st.dataframe(flattened_df)
         
         # Download options
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             csv = original_df.to_csv(index=False)
@@ -560,12 +560,12 @@ def display_results(results, selected_district=None, date_period=None):
                 key="flattened_csv_button"
             )
             
-        with col3:
-            # Add clear cookies/session button directly in the results area too
-            if st.button("Clear Cache & Session", key="clear_within_results"):
-                clear_session_and_cache()
-                st.success("Cache and session data cleared!")
-                st.info("Refresh the page to reset the app completely.")
+        # with col3:
+        #     # Add clear cookies/session button directly in the results area too
+        #     if st.button("Clear Cache & Session", key="clear_within_results"):
+        #         clear_session_and_cache()
+        #         st.success("Cache and session data cleared!")
+        #         st.info("Refresh the page to reset the app completely.")
             
     except Exception as e:
         st.error(f"Error processing results: {str(e)}")
